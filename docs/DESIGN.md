@@ -245,3 +245,26 @@ switches belong to the API/worker quota layer (README element "cost
 quotas") — the graph stays a pure workflow and does not duplicate platform
 concerns. Provider-side prompt caching is a W2+ optimization once real
 traffic shows repeat prefixes.
+
+## 12. Disagreement resolution
+
+Design and whitebox **cannot disagree destructively**, by construction: the
+roles are asymmetric. Whitebox emits factual evidence (`source / finding /
+risk_hint`) and has no write access to the design; design emits decisions and
+has no write access to evidence. Merge folds each evidence item into its own
+coverage-matrix row next to the design's own judgement — disagreement shows
+up as two rows over the same area, never as one overwriting the other.
+
+The arbitration owner is the **human gate**, with two mechanisms:
+
+- **Veto (implemented).** A gate decision may carry `drop_areas: [...]`.
+  The veto is durable task state: every later merge pass skips vetoed
+  areas, including after revise rounds — the orchestrator never silently
+  re-proposes evidence a human has declined (regression-tested).
+- **Disposition (W2).** The design agent will be required to answer every
+  evidence item with `integrate` or `rebut` (+ reason). Rebutted items are
+  flagged as agent disagreement at the gate, so the human arbitrates only
+  the contested rows instead of scanning the full matrix.
+
+Failure of whitebox is a degenerate case of the same rule: absent evidence
+cannot conflict with anything (section 9, degrade never blocks).

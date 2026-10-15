@@ -1,4 +1,4 @@
-"""Supervisor orchestrator: routes a task across domain agents with human gates between stages.
+r"""Supervisor orchestrator: routes a task across domain agents with human gates between stages.
 
 Topology (docs/DESIGN.md sections 4, 9, 10):
 
@@ -35,6 +35,7 @@ class OrchestratorState(TypedDict, total=False):
     cases: dict[str, Any]
     report: dict[str, Any]
     approved: bool
+    dropped_areas: list[str]  # evidence areas vetoed by the human gate (veto is durable)
     design_attempts: int
     cases_attempts: int
     outcome: str  # "report" | "rejected_design" | "rejected_cases"
@@ -82,7 +83,10 @@ def _merge_evidence(state: OrchestratorState) -> OrchestratorState:
     # the same evidence twice (breaks handoff idempotency).
     design = copy.deepcopy(state["design"])
     evidence = state.get("evidence") or {}
+    dropped = set(state.get("dropped_areas") or [])
     for item in evidence.get("items", []):
+        if item.get("source") in dropped:
+            continue  # vetoed at the gate — not an error, a recorded human decision
         design.setdefault("coverage_matrix", []).append(
             {"area": item.get("source", "static"), "risk": item.get("risk_hint", ""), "covered_by": []}
         )
@@ -97,10 +101,15 @@ def _gate(stage: str):
 
     def node(state: OrchestratorState) -> OrchestratorState:
         decision = interrupt({"stage": stage, "task_id": state["task_id"]})
-        return {
+        update = {
             "approved": bool(decision.get("approved")),
             "feedback": decision.get("feedback", ""),
         }
+        if decision.get("drop_areas"):
+            # Human veto on evidence: durable for the rest of the task — every
+            # later merge pass skips these areas (never silently re-proposed).
+            update["dropped_areas"] = list(decision["drop_areas"])
+        return update
 
     node.__name__ = f"gate_{stage}"
     return node

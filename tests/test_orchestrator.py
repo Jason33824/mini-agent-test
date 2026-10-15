@@ -101,6 +101,21 @@ def test_repeated_rejection_surfaces_to_human():
     assert "__interrupt__" not in final
 
 
+def test_gate_decision_can_veto_evidence_areas():
+    """Human veto on evidence is durable: the dropped area never re-enters the matrix."""
+    _wire(design_scripted=2)
+    graph = _graph()
+    graph.invoke({"task_id": "t1", "prd": "checkout PRD"}, CFG)
+    out = _resume(graph, {"approved": False, "feedback": "skip the static finding", "drop_areas": ["interface specs"]})
+    assert out["__interrupt__"]  # revise round
+    out = _resume(graph, {"approved": True, "feedback": ""})
+    assert out["__interrupt__"]
+    final = _resume(graph, {"approved": True, "feedback": ""})
+    assert final["outcome"] == "report"
+    areas = {c["area"] for c in final["design"]["coverage_matrix"]}
+    assert areas == {"checkout"}  # vetoed area absent after a full revise round
+
+
 def test_llm_call_count_is_bounded():
     """Happy path = exactly 4 LLM calls; the 6-call ceiling is structural (DESIGN.md section 11)."""
     _wire()
