@@ -15,7 +15,6 @@ def build_graph():
     g.add_conditional_edges(
         "review_gate",
         lambda s: "refine" if s["approved"] else END,
-        {"refine": "refine", "end": END},
     )
     g.add_edge("refine", END)
     return g.compile()
