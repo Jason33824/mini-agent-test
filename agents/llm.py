@@ -76,7 +76,16 @@ class FakeLLM:
 _default: LLMClient | None = None
 
 
-def get_llm() -> LLMClient:
+def get_llm(agent_name: str | None = None) -> LLMClient:
+    """Model routing (DESIGN.md section 11): per-agent env override, else the shared default.
+
+    MINI_AGENT_LLM_MODEL_<AGENT> (e.g. MINI_AGENT_LLM_MODEL_TEST_DESIGN) pins
+    one agent to a model — strong model for generation, cheap for verdicts.
+    """
+    if agent_name:
+        override = os.environ.get(f"MINI_AGENT_LLM_MODEL_{agent_name.upper()}")
+        if override:
+            return OpenAICompatLLM(model=override)
     global _default
     if _default is None:
         _default = OpenAICompatLLM()

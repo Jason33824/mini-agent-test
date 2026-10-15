@@ -176,3 +176,29 @@ the gate node suspends the graph, the API resumes it with
 Whitebox evidence survives revise rounds: a rejected design re-runs only the
 design branch, and static facts are reused. The fan-in node clears consumed
 feedback, which also keeps parallel branches free of shared state writes.
+
+## 11. Token & cost model
+
+**Call-count bound (structural).** The happy path makes exactly **4 LLM calls
+per task** — one per agent; each revise round adds exactly 1. With
+MAX_REVISE=2 the per-task upper bound is **6 calls**. The bound is a property
+of the graph topology, not an aspiration — it is pinned by a regression test
+(`test_llm_call_count_is_bounded`).
+
+**Context shape.** design and whitebox each consume the full PRD (parallel
+branches: unavoidable 2×PRD); cases consumes the design artifact; execution
+consumes the cases artifact — context grows linearly downstream. If real
+artifacts grow large, the lever is summary-forwarding (pass digests between
+agents, fetch full artifacts by id); not needed at v0 sizes.
+
+**Model routing.** Each agent resolves its model through env: a
+per-agent override (`MINI_AGENT_LLM_MODEL_<AGENT>`) falls back to the shared
+`MINI_AGENT_LLM_MODEL`. Typical split: strong model for design/case
+generation, cheaper model for execution verdicts. Per-agent token attribution
+(section 6) shows where the money goes; routing is how you act on it.
+
+**Not in the graph.** Per-task/per-tenant budget enforcement and kill
+switches belong to the API/worker quota layer (README element "cost
+quotas") — the graph stays a pure workflow and does not duplicate platform
+concerns. Provider-side prompt caching is a W2+ optimization once real
+traffic shows repeat prefixes.

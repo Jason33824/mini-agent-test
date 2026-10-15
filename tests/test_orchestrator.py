@@ -101,6 +101,20 @@ def test_repeated_rejection_surfaces_to_human():
     assert "__interrupt__" not in final
 
 
+def test_llm_call_count_is_bounded():
+    """Happy path = exactly 4 LLM calls; the 6-call ceiling is structural (DESIGN.md section 11)."""
+    _wire()
+    graph = _graph()
+    graph.invoke({"task_id": "t1", "prd": "checkout PRD"}, CFG)
+    _resume(graph, {"approved": True, "feedback": ""})
+    final = _resume(graph, {"approved": True, "feedback": ""})
+    assert final["outcome"] == "report"
+    assert len(AGENT_REGISTRY["test_design"].llm.calls) == 1
+    assert len(AGENT_REGISTRY["whitebox"].llm.calls) == 1
+    assert len(AGENT_REGISTRY["test_case"].llm.calls) == 1
+    assert len(AGENT_REGISTRY["test_execution"].llm.calls) == 1
+
+
 def test_whitebox_failure_degrades_never_blocks():
     _wire()
     AGENT_REGISTRY["whitebox"].llm = FakeLLM({})  # no scripted response -> raises

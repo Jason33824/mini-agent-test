@@ -32,7 +32,7 @@ class BaseAgent:
         self.llm = llm
 
     def client(self) -> LLMClient:
-        return self.llm or get_llm()
+        return self.llm or get_llm(self.name)  # per-agent model slot (DESIGN.md section 11)
 
     def build_graph(self):
         raise NotImplementedError
