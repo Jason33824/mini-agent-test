@@ -4,6 +4,7 @@ langgraph==0.2.*
 langchain-core==0.3.*
 langchain-openai==0.2.*
 openai==1.55.*
+pydantic==2.9.*
 openinference-instrumentation-langchain==0.1.*
 phoenix==5.0.*
 psycopg[binary]==3.2.*

@@ -1,0 +1,128 @@
+# Multi-agent design
+
+Detailed design for agent collaboration in mini-agent-platform. Decision
+rationale lives in [ADR 0002](adr/0002-multi-agent-collaboration.md); this
+document is the how.
+
+## 1. Principles
+
+1. **Protocol before topology.** First make the collaboration correct
+   (artifact schemas, gate semantics), then make it distributed (independent
+   containers, queues). Never introduce both complexities at once.
+2. **Agents exchange artifacts, never prose.** Every handoff is a versioned,
+   pydantic-validated payload. If an agent needs to "just explain", that
+   explanation belongs in a schema field.
+3. **Human gates are first-class citizens.** A gate is a graph node with its
+   own state, not an afterthought bolted onto a chat loop.
+4. **Every token is attributable.** Cost is aggregated per agent per task; the
+   first question an operator asks is "which agent burns money", so the trace
+   tree must answer it by construction.
+
+## 2. Agents and responsibilities
+
+| Agent | Input | Output artifact | Responsibility | Failure semantics |
+|---|---|---|---|---|
+| **orchestrator** (supervisor) | user task | `ExecutionReport` (final) | Route task -> agents; insert human gates; aggregate report | Retries handoffs; never edits artifacts |
+| **test-design** | `TaskInput` (PRD text) | `DesignArtifact` | What to test: strategy, risks, coverage matrix | Bounded revise loop on gate rejection |
+| **whitebox** | PRD + interface specs | `WhiteboxEvidence` | Static view: interface contracts, boundary values, branch points; runs in parallel with design and merges as evidence | Optional stage; missing evidence degrades design, never blocks |
+| **test-case** | `DesignArtifact` (+ evidence) | `CaseArtifact` | Concrete cases: steps, data, assertions, priority | Bounded revise loop; cases must link to design items |
+| **test-execution** | approved `CaseArtifact` | `ExecutionReport` | Orchestrate runs, collect results per case | Per-case retry; report marks failed cases explicitly |
+
+## 3. Artifact contract (v1)
+
+```python
+class BaseArtifact(BaseModel):
+    version: Literal["v1"]
+    task_id: str
+    idempotency_key: str          # uuid5(task_id, agent, stage)
+    produced_by: AgentName
+
+class DesignArtifact(BaseArtifact):
+    kind: Literal["design"]
+    scope: list[str]              # what to test
+    risks: list[str]
+    coverage_matrix: list[CoverageItem]
+
+class CaseArtifact(BaseArtifact):
+    kind: "cases"
+    items: list[TestCase]         # steps / data / assertion / priority / design_ref
+```
+
+- **Versioning:** agents validate `version` and reject unknown values with a
+  typed error — a schema change is a failing test, not silent drift.
+- **Idempotency key:** worker restarts re-emit the same artifact id, so retry
+  after a crash cannot duplicate downstream effects.
+
+## 4. Collaboration sequence
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant O as Orchestrator
+    participant D as test-design
+    participant B as whitebox
+    participant C as test-case
+    participant E as test-execution
+
+    U->>O: submit task (PRD)
+    par design with parallel evidence
+        O->>D: TaskInput
+        O->>B: TaskInput (specs)
+        B-->>O: WhiteboxEvidence
+    end
+    D-->>O: DesignArtifact (merges evidence)
+    O->>U: HUMAN GATE 1 — approve strategy?
+    U->>O: approved / rejected (feedback)
+    O->>C: DesignArtifact
+    C-->>O: CaseArtifact
+    O->>U: HUMAN GATE 2 — approve cases?
+    U->>O: approved
+    O->>E: CaseArtifact
+    E-->>O: ExecutionReport
+    O->>U: report
+```
+
+## 5. Collaboration mode: two phases
+
+**Phase 1 (W1.5-W3): supervisor in one process.** The orchestrator is a
+LangGraph; each agent is a subgraph invoked by handoff. All agents live in one
+worker container. This validates the protocol — schemas, gates, revise loops —
+with zero distributed-systems overhead.
+
+**Phase 2 (W4+): agents as independent containers.** Each agent gets its own
+worker + queue; the orchestrator publishes handoff messages on redis streams.
+Adds: dead-letter queues, per-agent autoscaling, cross-container trace
+continuity. Only the topology changes — the artifact contract is untouched,
+which is exactly why it was designed first.
+
+Rejected for v0: free-form multi-agent chat (no testable contract), and a
+hard-coded pipeline (no collaboration semantics, just a pipe).
+
+## 6. Observability and cost
+
+- The orchestrator opens the root span (`task_id`); every agent handoff opens
+  a child span named by agent — one trace tree per task across all agents.
+- Token usage is recorded per agent per node; Phoenix attributes roll up to
+  per-agent cost. Dashboards answer "which agent burns money" without log
+  archaeology.
+- Human gates are spans too: gate wait time is a first-class metric (it is
+  usually the largest latency component, and hiding it hides the truth).
+
+## 7. Failure semantics
+
+| Failure | Behavior |
+|---|---|
+| Agent LLM call fails | Node-level retry (bounded); artifact idempotency key prevents duplicates |
+| Worker crash mid-graph | ARQ redelivers; graph resumes from last checkpointed state |
+| Gate rejected | Normal path, not an error: bounded revise loop (max N), then surface to human |
+| Schema mismatch at handoff | Typed rejection, task marked failed — never forwarded silently |
+| Cancel requested | Cooperative flag checked at every handoff boundary; current node finishes, next never starts |
+
+## 8. Evaluation
+
+- **Per-agent unit tests:** fixture input -> artifact assertions (schema +
+  semantic invariants, e.g. every case links to a design item).
+- **Orchestrator tests:** gate semantics (rejection terminates, approval
+  proceeds), artifact version rejection.
+- **Golden-set end-to-end (W4):** a small frozen PRD set with expected
+  artifact shapes; runs in CI as the collaboration regression suite.
