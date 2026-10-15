@@ -33,8 +33,11 @@ def test_artifact_loader_accepts_v1_design():
             "task_id": "t1",
             "idempotency_key": "k1",
             "produced_by": "test_design",
-            "scope": [],
-            "risks": [],
+            "scope": ["checkout flow"],
+            "risks": ["payment double-charge"],
+            "coverage_matrix": [
+                {"area": "payment", "risk": "double-charge", "covered_by": ["tc-1"]}
+            ],
         }
     )
     assert art.kind == "design"

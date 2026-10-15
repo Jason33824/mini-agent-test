@@ -47,7 +47,7 @@ class CaseResult(BaseModel):
 
 
 class ExecutionReport(BaseArtifact):
-    kind: "report" = "report"
+    kind: Literal["report"] = "report"
     results: list[CaseResult]
 
 
