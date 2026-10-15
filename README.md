@@ -80,8 +80,8 @@ Design decisions live in [docs/adr/](docs/adr/); the full multi-agent design in
 ## Roadmap
 
 - [x] **W1** Scaffold: compose topology; single 3-node graph runs end-to-end; first green tests
-- [x] **W1.5** Multi-agent refactor: 4 domain agents + supervisor orchestrator + artifact contracts (this commit)
-- [ ] **W2** JWT auth + postgres wiring + tenant isolation; wire the two human gates to LangGraph interrupt()
+- [x] **W1.5** Real collaboration: parallel whitebox fan-in, interrupt()-based human gates, bounded revise loops, token cost model
+- [ ] **W2** JWT auth + postgres wiring + tenant isolation; real-LLM smoke run of the full four-agent chain
 - [ ] **W3** Async: ARQ queue, task state machine, SSE progress, cooperative cancel (the hard week)
 - [ ] **W4** Quotas, rate limiting, per-agent cost aggregation, centralized Phoenix, GitHub Actions; pilot: execution agent as its own container (Phase 2 begins)
 - [ ] **W5** Failure drills: kill worker mid-run, cut LLM network, exhaust quota, locust load test; close out ADRs

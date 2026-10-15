@@ -59,6 +59,31 @@ class CaseArtifact(BaseArtifact):
 
 ## 4. Collaboration sequence
 
+### Topology — the orchestrator graph
+
+```mermaid
+flowchart TD
+    S((task in)) --> D[test-design agent<br/>draft - validate]
+    S --> B[whitebox agent<br/>analyze - validate]
+    D --> M["merge_evidence<br/>fold evidence into the matrix<br/>deepcopy: never mutate upstream"]
+    B --> M
+    M --> G1{"GATE 1: design<br/>interrupt, resume with decision"}
+    G1 -- approved --> C[test-case agent<br/>draft - link_check - validate]
+    G1 -- "rejected: revise loop" --> D
+    G1 -- "rejected: exhausted" --> S1["surface_design<br/>outcome = rejected_design"]
+    C --> G2{"GATE 2: cases<br/>interrupt, resume with decision"}
+    G2 -- approved --> E[test-execution agent<br/>run - validate]
+    G2 -- "rejected: revise loop" --> C
+    G2 -- "rejected: exhausted" --> S2["surface_cases<br/>outcome = rejected_cases"]
+    E --> F[finish<br/>outcome = report]
+```
+
+Revise rounds re-run **only the design branch** (whitebox evidence is static
+fact and survives; the merged matrix is rebuilt from the fresh design on
+every pass — the deepcopy rule keeps this idempotent).
+
+### Message sequence
+
 ```mermaid
 sequenceDiagram
     participant U as User
@@ -159,6 +184,24 @@ OpenAI-compatible endpoint from env config; tests inject `FakeLLM`, whose
 responses are routed by system-prompt substring (parallel branches consume
 independent queues, so fan-out order never matters) and deep-copied on
 consume.
+
+### Inside the agents
+
+```mermaid
+flowchart LR
+    subgraph SD[test-design]
+        d1[draft_design<br/>LLM] --> d2[validate<br/>load_artifact]
+    end
+    subgraph WB[whitebox]
+        w1[analyze<br/>LLM] --> w2[validate<br/>load_artifact]
+    end
+    subgraph TC[test-case]
+        c1[draft_cases<br/>LLM] --> c2[link_check<br/>design_ref hits anchors] --> c3[validate<br/>load_artifact]
+    end
+    subgraph TE[test-execution]
+        e1[run_cases<br/>LLM] --> e2[validate<br/>load_artifact]
+    end
+```
 
 ## 10. Revise loop
 
