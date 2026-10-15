@@ -26,6 +26,17 @@ class DesignArtifact(BaseArtifact):
     coverage_matrix: list[CoverageItem]
 
 
+class EvidenceItem(BaseModel):
+    source: str
+    finding: str
+    risk_hint: str
+
+
+class WhiteboxEvidence(BaseArtifact):
+    kind: Literal["evidence"] = "evidence"
+    items: list[EvidenceItem]
+
+
 class TestCaseItem(BaseModel):
     title: str
     steps: list[str]
@@ -57,7 +68,12 @@ def load_artifact(payload: dict[str, Any]) -> BaseArtifact:
     if version != "v1":
         raise ValueError(f"unsupported artifact version: {version!r}")
     kind = payload.get("kind")
-    registry = {"design": DesignArtifact, "cases": CaseArtifact, "report": ExecutionReport}
+    registry = {
+        "design": DesignArtifact,
+        "evidence": WhiteboxEvidence,
+        "cases": CaseArtifact,
+        "report": ExecutionReport,
+    }
     if kind not in registry:
         raise ValueError(f"unknown artifact kind: {kind!r}")
     return registry[kind](**payload)

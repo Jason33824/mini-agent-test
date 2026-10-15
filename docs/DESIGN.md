@@ -43,6 +43,10 @@ class DesignArtifact(BaseArtifact):
     risks: list[str]
     coverage_matrix: list[CoverageItem]
 
+class WhiteboxEvidence(BaseArtifact):
+    kind: Literal["evidence"]
+    items: list[EvidenceItem]     # source / finding / risk_hint
+
 class CaseArtifact(BaseArtifact):
     kind: "cases"
     items: list[TestCase]         # steps / data / assertion / priority / design_ref
@@ -126,3 +130,49 @@ hard-coded pipeline (no collaboration semantics, just a pipe).
   proceeds), artifact version rejection.
 - **Golden-set end-to-end (W4):** a small frozen PRD set with expected
   artifact shapes; runs in CI as the collaboration regression suite.
+
+## 9. Agent internals
+
+Each domain agent is a small graph of typed nodes. No agent contains a human
+gate — gates belong to the orchestrator (section 2), which keeps agents pure
+business logic and makes collaboration semantics testable in one place.
+
+| Agent | Nodes | LLM calls | Contract enforcement |
+|---|---|---|---|
+| test-design | `draft_design → validate` | 1 (PRD + revise feedback) | `load_artifact` after draft |
+| whitebox | `analyze → validate` | 1 (PRD/specs) | `load_artifact` after analyze |
+| test-case | `draft_cases → link_check → validate` | 1 (design summary) | every `design_ref` must hit an anchor (scope ∪ matrix areas) |
+| test-execution | `run_cases → validate` | 1 (cases) | `load_artifact` after run |
+
+Evidence merge lives in the **orchestrator** (`merge_evidence` node), not in
+the design agent: the two agents run in parallel, so the design agent cannot
+see whitebox output. Two invariants make the merge safe:
+
+- **Deep-copy on join.** The orchestrator never mutates an upstream artifact.
+  A shallow copy shares the nested `coverage_matrix` list, and a revise round
+  would fold the same evidence twice — silently breaking handoff idempotency.
+- **Degrade, never block.** Whitebox failure marks evidence empty and logs a
+  warning; the design proceeds on its own matrix (section 2 semantics).
+
+LLM access is a single injectable seam (`agents/llm.py`): production uses an
+OpenAI-compatible endpoint from env config; tests inject `FakeLLM`, whose
+responses are routed by system-prompt substring (parallel branches consume
+independent queues, so fan-out order never matters) and deep-copied on
+consume.
+
+## 10. Revise loop
+
+Human gates are implemented with `langgraph.types.interrupt` + a checkpointer:
+the gate node suspends the graph, the API resumes it with
+`{"approved": bool, "feedback": str}`.
+
+- **approved** → next stage.
+- **rejected, attempts < MAX_REVISE (=2)** → back to the stage's handoff; the
+  agent re-runs with the feedback injected into its prompt.
+- **rejected, attempts exhausted** → `surface_<stage>` node records
+  `outcome="rejected_<stage>"` and ends the run — a human decides what is
+  next; the loop never spins silently.
+
+Whitebox evidence survives revise rounds: a rejected design re-runs only the
+design branch, and static facts are reused. The fan-in node clears consumed
+feedback, which also keeps parallel branches free of shared state writes.
