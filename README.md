@@ -1,4 +1,4 @@
-# mini-agent-platform
+# mini-ai-test-agent-platform
 
 A self-hostable, fully dockerized **multi-agent collaboration platform** —
 domain agents (test design, whitebox analysis, test cases, execution) working
@@ -76,15 +76,6 @@ Seven containers, one `docker compose up`.
 
 Design decisions live in [docs/adr/](docs/adr/); the full multi-agent design in
 [docs/DESIGN.md](docs/DESIGN.md).
-
-## Roadmap
-
-- [x] **W1** Scaffold: compose topology; single 3-node graph runs end-to-end; first green tests
-- [x] **W1.5** Real collaboration: parallel whitebox fan-in, interrupt()-based human gates, bounded revise loops, token cost model
-- [ ] **W2** JWT auth + postgres wiring + tenant isolation; real-LLM smoke run of the full four-agent chain
-- [ ] **W3** Async: ARQ queue, task state machine, SSE progress, cooperative cancel (the hard week)
-- [ ] **W4** Quotas, rate limiting, per-agent cost aggregation, centralized Phoenix, GitHub Actions; pilot: execution agent as its own container (Phase 2 begins)
-- [ ] **W5** Failure drills: kill worker mid-run, cut LLM network, exhaust quota, locust load test; close out ADRs
 
 ## Stack
 

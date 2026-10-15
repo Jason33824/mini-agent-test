@@ -1,6 +1,6 @@
 # Multi-agent design
 
-Detailed design for agent collaboration in mini-agent-platform. Decision
+Detailed design for agent collaboration in mini-ai-test-agent-platform. Decision
 rationale lives in [ADR 0002](adr/0002-multi-agent-collaboration.md); this
 document is the how.
 
