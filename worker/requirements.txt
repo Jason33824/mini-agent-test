@@ -1,10 +1,17 @@
-arq==0.26.*
-redis==5.2.*
-langgraph==0.2.*
-langchain-core==0.3.*
-langchain-openai==0.2.*
+arq==0.28.*
+redis==5.3.*
+langgraph==1.1.*
+langgraph-checkpoint-postgres==2.*
 openai==1.55.*
 pydantic==2.9.*
-openinference-instrumentation-langchain==0.1.*
-phoenix==5.0.*
 psycopg[binary]==3.2.*
+sqlalchemy==2.0.*
+
+# langchain-core / langchain-openai / openinference-instrumentation-langchain
+# were dropped: nothing in the repo imports them (the LLM seam is a plain
+# OpenAI-compatible client in agents/llm.py). They re-enter with the Phoenix
+# tracing batch, at versions compatible with the pinned langgraph.
+#
+# phoenix is not pinned yet either: nothing imports it, and on PyPI the bare
+# `phoenix` name belongs to an unrelated project (an emulator interface, not
+# the observability backend) — the tracing batch re-enters as `arize-phoenix`.

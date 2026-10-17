@@ -1,6 +1,8 @@
 services:
   api:
-    build: ./api
+    build:
+      context: .
+      dockerfile: api/Dockerfile
     ports:
       - "8000:8000"
     environment:
@@ -13,18 +15,24 @@ services:
       redis:
         condition: service_started
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8000/health || exit 1"]
+      # the api image is python:3.12-slim (no curl) and the real route is
+      # /healthz — probe it with stdlib urllib instead
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz', timeout=2)"]
       interval: 10s
       timeout: 3s
       retries: 3
 
   worker:
-    build: ./worker
+    build:
+      context: .
+      dockerfile: worker/Dockerfile
     environment:
       DATABASE_URL: postgresql+psycopg://mini:minipw@postgres:5432/miniagent
       REDIS_URL: redis://redis:6379/0
       OPENAI_API_KEY: ${OPENAI_API_KEY}
-      OPENAI_BASE_URL: ${OPENAI_BASE_URL}
+      # agents/llm.py reads this name; the old OPENAI_BASE_URL entry was dead
+      # (nothing in the repo consumes it) and silently fell back to api.openai.com
+      MINI_AGENT_LLM_BASE_URL: ${MINI_AGENT_LLM_BASE_URL}
       PHOENIX_URL: http://phoenix:6006
     depends_on:
       postgres:
@@ -41,6 +49,10 @@ services:
 
   postgres:
     image: postgres:16-alpine
+    # Task ledger DDL: applied automatically by the postgres image on first
+    # volume init (docker-entrypoint-initdb.d). See postgres/init.sql.
+    volumes:
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     environment:
       POSTGRES_USER: mini
       POSTGRES_PASSWORD: minipw
