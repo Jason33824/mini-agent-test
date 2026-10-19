@@ -60,6 +60,21 @@ class TaskStore:
             row = (await conn.execute(sql, {"task_id": task_id, "user_id": user_id})).mappings().first()
         return dict(row) if row else None
 
+    async def list_artifacts(self, task_id: str, user_id: str) -> list[dict[str, Any]]:
+        """Owner-scoped artifact listing (joined through the task's owner)."""
+        sql = text(
+            "SELECT a.id, a.task_id, a.kind, a.version, a.idempotency_key,"
+            " a.content, a.created_at FROM artifacts a"
+            " JOIN tasks t ON t.id = a.task_id"
+            " WHERE a.task_id = :task_id AND t.user_id = :user_id"
+            " ORDER BY a.created_at"
+        )
+        async with self._engine.begin() as conn:
+            rows = (
+                await conn.execute(sql, {"task_id": task_id, "user_id": user_id})
+            ).mappings().all()
+        return [dict(r) for r in rows]
+
     async def record_decision(
         self, task_id: str, gate: str, approved: bool, feedback: str,
         drop_areas: list[str], decided_by: str,

@@ -217,6 +217,20 @@ async def cancel_task(
     return {"task_id": task_id, "result": outcome}
 
 
+@app.get("/v1/tasks/{task_id}/artifacts")
+async def list_task_artifacts(
+    task_id: str,
+    user: Annotated[str, Depends(current_user)],
+    store: StoreDep,
+) -> dict:
+    """Persisted artifact ledger (LLD §9): the frontend renders report cards
+    from this after completion — SSE only carries the artifact id, not content."""
+    task = await store.get_task(task_id, user)
+    if task is None:
+        raise ApiError(404, "task_not_found", "no such task for this user")
+    return {"artifacts": await store.list_artifacts(task_id, user)}
+
+
 @app.get("/v1/tasks/{task_id}/events")
 async def task_events(
     task_id: str,

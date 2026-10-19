@@ -83,12 +83,14 @@ services:
 
   # Next.js frontend lands late in W1; excluded from default `up` until it builds.
   web:
-    build: ./web
-    profiles: ["full"]
+    build:
+      context: .
+      dockerfile: web/Dockerfile
     ports:
       - "3000:3000"
     depends_on:
-      - api
+      api:
+        condition: service_healthy
 
 volumes:
   phoenix_pgdata:

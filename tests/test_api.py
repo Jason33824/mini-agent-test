@@ -17,6 +17,7 @@ class FakeStore:
     def __init__(self) -> None:
         self.tasks: dict[str, dict[str, Any]] = {}
         self.decisions: list[dict[str, Any]] = []
+        self.artifacts: dict[str, list[dict[str, Any]]] = {}
 
     def seed(self, task_id: str, user_id: str = "alice", status: str = "queued",
              current_gate: str | None = None) -> dict[str, Any]:
@@ -30,6 +31,9 @@ class FakeStore:
 
     async def ping(self) -> None:
         return None
+
+    async def list_artifacts(self, task_id: str, user_id: str) -> list[dict[str, Any]]:
+        return list(self.artifacts.get(task_id, []))
 
     async def create_task(self, user_id: str, title: str, prd: str) -> dict[str, Any]:
         row = {
@@ -145,6 +149,20 @@ def test_task_reads_are_owner_scoped(client):
     assert client.get(f"/v1/tasks/{task_id}", headers=ALICE).status_code == 200
     listing = client.get("/v1/tasks", headers=BOB).json()["tasks"]
     assert listing == []
+
+
+def test_artifact_listing_is_owner_scoped(client):
+    """The report cards render from this route — a stranger gets a 404, and
+    even the owner sees only the artifacts of their own task."""
+    task_id = client.post("/v1/tasks", json={"title": "t", "prd": "P"},
+                          headers=ALICE).json()["task_id"]
+    STORE.artifacts[task_id] = [
+        {"id": "a1", "task_id": task_id, "kind": "design", "version": "v1",
+         "idempotency_key": f"{task_id}:design:a1", "content": {"scope": ["checkout"]}},
+    ]
+    assert client.get(f"/v1/tasks/{task_id}/artifacts", headers=BOB).status_code == 404
+    body = client.get(f"/v1/tasks/{task_id}/artifacts", headers=ALICE).json()
+    assert [a["kind"] for a in body["artifacts"]] == ["design"]
 
 
 def test_gate_decision_requires_awaiting_task(client):
