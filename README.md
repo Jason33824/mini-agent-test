@@ -1,4 +1,4 @@
-# mini-ai-test-agent-platform
+# mini-ai-agent
 
 A self-hostable, fully dockerized **multi-agent collaboration platform** —
 domain agents (test design, whitebox analysis, test cases, execution) working

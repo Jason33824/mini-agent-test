@@ -54,7 +54,7 @@ async def lifespan(app: FastAPI):
     await app.state.store.close()
 
 
-app = FastAPI(title="mini-ai-test-agent-platform", version="0.2.0", lifespan=lifespan)
+app = FastAPI(title="mini-ai-agent", version="0.2.0", lifespan=lifespan)
 
 
 @app.exception_handler(ApiError)

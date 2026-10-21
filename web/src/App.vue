@@ -27,7 +27,7 @@ onUnmounted(() => window.clearInterval(timer))
 
 <template>
   <header class="topbar">
-    <RouterLink to="/tasks" class="brand">mini-ai-test-agent-platform</RouterLink>
+    <RouterLink to="/tasks" class="brand">mini-ai-agent</RouterLink>
     <span class="spacer" />
     <span class="health" :class="apiUp ? 'up' : 'down'" :title="apiUp ? 'api up' : 'api unreachable'" />
     <label class="who">
