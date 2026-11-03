@@ -8,10 +8,8 @@ psycopg[binary]==3.2.*
 sqlalchemy==2.0.*
 
 # langchain-core / langchain-openai / openinference-instrumentation-langchain
-# were dropped: nothing in the repo imports them (the LLM seam is a plain
-# OpenAI-compatible client in agents/llm.py). They re-enter with the Phoenix
-# tracing batch, at versions compatible with the pinned langgraph.
-#
-# phoenix is not pinned yet either: nothing imports it, and on PyPI the bare
-# `phoenix` name belongs to an unrelated project (an emulator interface, not
-# the observability backend) — the tracing batch re-enters as `arize-phoenix`.
+# stay out on purpose: nothing imports them — the LLM seam is a plain
+# OpenAI-compatible client, and tracing uses manual OTel spans (tracing.py).
+# The auto-instrumentors would duplicate the manual span tree (ADR 0001,
+# same lesson as the parent platform): registration pins auto_instrument=False.
+arize-phoenix-otel==0.17.2

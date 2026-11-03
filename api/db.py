@@ -31,14 +31,63 @@ class TaskStore:
         async with self._engine.begin() as conn:
             await conn.execute(text("SELECT 1"))
 
-    async def create_task(self, user_id: str, title: str, prd: str) -> dict[str, Any]:
+    async def authenticate(self, username: str) -> dict[str, Any] | None:
+        """Login lookup by username — password verification happens in
+        api/auth.py (crypto never reaches the SQL layer)."""
         sql = text(
-            "INSERT INTO tasks (id, user_id, title, prd)"
-            " VALUES (gen_random_uuid(), :user_id, :title, :prd) RETURNING *"
+            "SELECT id, tenant_id, username, pw_hash FROM users WHERE username = :username"
         )
         async with self._engine.begin() as conn:
-            row = (await conn.execute(sql, {"user_id": user_id, "title": title, "prd": prd})).mappings().one()
-        return dict(row)
+            row = (await conn.execute(sql, {"username": username})).mappings().first()
+        return dict(row) if row else None
+
+    async def quota_status(self, tenant_id: str) -> dict[str, Any]:
+        """Current-window usage vs. the tenant's monthly budget (ADR 0003).
+
+        Calendar-month window: `date_trunc` keeps the boundary in one place —
+        settlement and reservation read the same window without clock maths
+        in Python.
+        """
+        sql = text(
+            "SELECT t.monthly_llm_calls AS limit_calls,"
+            " COALESCE(SUM(q.llm_calls), 0) AS used"
+            " FROM tenants t LEFT JOIN quota_ledger q"
+            "   ON q.tenant_id = t.id"
+            "   AND q.settled_at >= date_trunc('month', now())"
+            " WHERE t.id = :tenant_id GROUP BY t.monthly_llm_calls"
+        )
+        async with self._engine.begin() as conn:
+            row = (await conn.execute(sql, {"tenant_id": tenant_id})).mappings().one()
+        return {"used": int(row["used"]), "limit": int(row["limit_calls"])}
+
+    async def create_task(self, user_id: str, title: str, prd: str,
+                          idempotency_key: str | None = None) -> tuple[dict[str, Any], bool]:
+        """Insert, or replay the original row for a seen Idempotency-Key (ADR 0004).
+
+        The partial unique index (init.sql) scopes keys per user; a NULL key
+        never conflicts, so submissions without the header keep plain
+        create semantics. Returns (task_row, replayed).
+        """
+        params = {"user_id": user_id, "title": title, "prd": prd,
+                  "idempotency_key": idempotency_key}
+        ins = text(
+            "INSERT INTO tasks (id, user_id, title, prd, idempotency_key)"
+            " VALUES (gen_random_uuid(), :user_id, :title, :prd, :idempotency_key)"
+            " ON CONFLICT (user_id, idempotency_key) WHERE idempotency_key IS NOT NULL"
+            " DO NOTHING RETURNING *"
+        )
+        sel = text(
+            "SELECT * FROM tasks WHERE user_id = :user_id AND idempotency_key = :idempotency_key"
+        )
+        async with self._engine.begin() as conn:
+            row = (await conn.execute(ins, params)).mappings().first()
+            if row is None:
+                # conflict → the concurrent (or earlier) original wins the replay
+                fetched = (await conn.execute(sel, params)).mappings().first()
+                if fetched is None:
+                    raise RuntimeError("idempotency replay found no original row")
+                return dict(fetched), True
+        return dict(row), False
 
     async def list_tasks(
         self, user_id: str, status: str | None = None, limit: int = 50, offset: int = 0

@@ -17,10 +17,10 @@ prompts bloat, evaluation blurs, and per-stage cost attribution is impossible.
 
 1. Four domain agents (test-design, whitebox, test-case, test-execution) under
    one supervisor orchestrator.
-2. **Phase 1 (W1.5-W3):** all agents in one worker process as subgraphs —
+2. **Phase 1:** all agents in one worker process as subgraphs —
    supervisor handoff. Validates the protocol: pydantic artifact contracts,
    gate semantics, bounded revise loops.
-3. **Phase 2 (W4+):** agents become independent containers with redis streams
+3. **Phase 2:** agents become independent containers with redis streams
    between them; dead-letter queues, per-agent scaling. Only topology changes;
    the artifact contract does not.
 4. Whitebox runs as a parallel evidence producer merged into the design
@@ -31,7 +31,7 @@ prompts bloat, evaluation blurs, and per-stage cost attribution is impossible.
 ## Consequences
 
 - The repo layout changes: `agents/` package with one folder per agent, plus
-  `orchestrator.py`; the W1 single pipeline is absorbed as the test-design
+  `orchestrator.py`; the original single pipeline is absorbed as the test-design
   agent's internal graph.
 - Phase 1 accepts single-worker throughput limits; queues already exist (ARQ),
   so Phase 2 is a topology change, not a rewrite.

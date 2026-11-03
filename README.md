@@ -39,7 +39,7 @@ free-form chat.
 
 ```mermaid
 flowchart TB
-    U[Browser] --> W[web - Next.js]
+    U[Browser] --> W[web - Vue 3 SPA]
     W --> A[api - FastAPI<br/>JWT auth - task state machine - quotas]
     A --> R[(redis)]
     R --> K[worker - ARQ<br/>runs the orchestrator graph]
@@ -58,28 +58,57 @@ flowchart TB
 
 Seven containers, one `docker compose up`.
 
+## Quickstart
+
+```bash
+cp .env.example .env        # fill in OPENAI_API_KEY and a random JWT_SECRET
+docker compose up --build   # postgres + redis + phoenix + api + worker + web
+
+# sign in (seeded users; alice/bob share tenant "acme" with a small budget)
+curl -s localhost:8000/v1/auth/token \
+  -H 'content-type: application/json' \
+  -d '{"username":"alice","password":"alice-dev"}'
+TOKEN=…                  # access_token from the response
+
+# submit a task; watch it suspend on the first human gate.
+# Re-posting with the same Idempotency-Key replays the original task (ADR 0004).
+curl -s localhost:8000/v1/tasks -H "authorization: Bearer $TOKEN" \
+  -H 'Idempotency-Key: quickstart-1' -H 'content-type: application/json' \
+  -d '{"title":"checkout","prd":"Refund flow must reject negative amounts."}'
+
+# approve the gate; then stream progress (or open http://localhost:3000)
+curl -s -X POST localhost:8000/v1/tasks/<task_id>/gates/design \
+  -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  -d '{"approved":true}'
+```
+
+The web app (nginx on :3000, proxying `/v1` to the api) is the same flow with
+SSE timeline, gate forms and artifact cards. Demo passwords: `alice-dev`,
+`bob-dev`, `carol-dev` — seeded in `postgres/init.sql`, replace for anything
+beyond localhost.
+
 ## Production elements -> how you can see them
 
 | # | Production element | Implementation | How you experience it |
 |---|---|---|---|
 | 1 | Async long tasks | Submit job -> ARQ queue -> poll/SSE | Submit and close the tab; the run survives |
 | 2 | Cooperative cancel | Cancel flag checked between agent handoffs | Cancel mid-run; the orchestrator stops at the next gate, not mid-token |
-| 3 | Multi-tenant isolation | thread_id = user:task namespacing; row-level ownership | Two users never see each other's runs |
-| 4 | Auth | JWT login; every route scoped | Anonymous requests get 401 before touching the queue |
-| 5 | Cost quotas | Per-user token budget; middleware check | Overage returns 429 with a quota header |
-| 6 | Failure retry + idempotency | ARQ retry; idempotency keys on artifacts | kill worker mid-run -> restart -> task resumes, no dupes |
-| 7 | Rate limiting | Semaphore around LLM calls | Concurrency spike degrades gracefully |
-| 8 | Cross-agent observability | One Phoenix trace tree: orchestrator root span -> child spans per agent | Follow one task across all agents; token cost aggregated per agent |
+| 3 | Multi-tenant isolation | owner-scoped reads; checkpoint threads namespaced `user:task` | Two users never see each other's runs |
+| 4 | Auth | JWT login (`/v1/auth/token`); every `/v1` route resolves the bearer | Anonymous requests get 401 before touching the queue |
+| 5 | Cost quotas | per-tenant monthly call budget; reserved at submission, settled on completion | Overage returns 429 with OpenAI-style `x-ratelimit-*` headers + `retry-after` |
+| 6 | Failure retry + idempotency | ARQ retry; LLM provider retries with exponential backoff + jitter (OpenAI SDK policy); Stripe-style `Idempotency-Key` on submission | kill worker mid-run -> restart -> task resumes, no dupes; re-POST with the same key replays the original task |
+| 7 | Rate limiting | process-wide semaphore around LLM calls (`MINI_AGENT_LLM_MAX_CONCURRENCY`) | Concurrency spike degrades gracefully |
+| 8 | Cross-agent observability | One Phoenix trace tree with OpenInference span kinds (CHAIN/LLM): task root -> agent handoff -> llm.chat | Follow one task across all agents; token cost aggregated per agent |
 | 9 | Artifact contracts | pydantic schemas with version field; agents reject unknown versions | A schema change shows up as a failing test, not a silent hallucination |
 | 10 | Health checks and graceful shutdown | compose healthchecks; SIGTERM drains in-flight agents | docker compose stop never orphans a task |
-| 11 | CI/CD | GitHub Actions: lint + pytest on every push | Red CI blocks merge |
+| 11 | CI/CD | GitHub Actions: ruff + pytest on the backend, vue-tsc + build on the web | Red CI blocks merge |
 
 Design decisions live in [docs/adr/](docs/adr/); the full multi-agent design in
 [docs/DESIGN.md](docs/DESIGN.md).
 
 ## Stack
 
-FastAPI · ARQ (redis) · LangGraph (supervisor + per-agent graphs) · Pydantic artifacts · PostgreSQL · Next.js · Phoenix (OpenTelemetry) · Docker Compose · pytest
+FastAPI · ARQ (redis) · LangGraph (supervisor + per-agent graphs) · Pydantic artifacts · PostgreSQL · Vue 3 (Vite SPA) · Phoenix (trace observability) · Docker Compose · pytest
 
 ## Scope and attribution
 

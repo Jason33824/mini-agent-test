@@ -81,7 +81,8 @@ services:
     volumes:
       - phoenix_pgdata:/var/lib/postgresql/data
 
-  # Next.js frontend lands late in W1; excluded from default `up` until it builds.
+  # Vue 3 SPA: nginx serves the built dist and proxies /v1 + /healthz to api
+  # (same-origin, no CORS; proxy_buffering off keeps SSE live).
   web:
     build:
       context: .

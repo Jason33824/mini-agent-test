@@ -6,7 +6,6 @@ functions are invoked directly, so the suites exercise transition semantics.
 """
 import asyncio
 import json
-import uuid
 from typing import Any
 
 import pytest
@@ -54,11 +53,12 @@ class FakeWorkerStore:
         self.tasks: dict[str, dict[str, Any]] = {}
         self.artifacts: list[tuple[str, str]] = []
         self.transitions: list[tuple[str, str]] = []
+        self.settled: list[tuple[str, int]] = []
 
     def seed(self, task_id: str, status: str = "queued",
              cancel_requested: bool = False) -> dict[str, Any]:
         row = {
-            "id": task_id, "prd": "PRD text", "status": status,
+            "id": task_id, "prd": "PRD text", "user_id": "alice", "status": status,
             "current_gate": None, "outcome": None, "error": None,
             "cancel_requested": cancel_requested,
         }
@@ -74,14 +74,14 @@ class FakeWorkerStore:
         row = self.tasks.get(task_id)
         if row and row["status"] in ("queued", "running"):
             self._to(task_id, "running")
-            return {"id": task_id, "prd": row["prd"]}
+            return {"id": task_id, "prd": row["prd"], "user_id": row["user_id"]}
         return None
 
     async def claim_resuming(self, task_id: str, gate: str):
         row = self.tasks.get(task_id)
         if row and row["status"] == "awaiting_gate" and row["current_gate"] == gate:
             self._to(task_id, "running")
-            return {"id": task_id, "prd": row["prd"]}
+            return {"id": task_id, "prd": row["prd"], "user_id": row["user_id"]}
         return None
 
     async def set_awaiting(self, task_id: str, gate: str) -> None:
@@ -102,6 +102,9 @@ class FakeWorkerStore:
     async def fail(self, task_id: str, error: str) -> None:
         self.tasks[task_id]["error"] = error
         self._to(task_id, "failed")
+
+    async def settle_quota(self, task_id: str, llm_calls: int) -> None:
+        self.settled.append((task_id, llm_calls))
 
     async def save_artifacts(self, task_id: str, values: dict[str, Any]):
         saved = []
@@ -181,6 +184,8 @@ def test_full_collaboration_reaches_report():
     assert {kind for _, kind in store.artifacts} == {"design", "evidence", "cases", "report"}
     assert redis.types().count("gate.request") == 2
     assert "task.completed" in redis.types()
+    # quota: the finished task books its exact call count (happy path = 4)
+    assert store.settled == [(TID, 4)]
     # single-writer sanity: no jump transitions in the ledger
     legal = {("queued", "running"), ("running", "awaiting_gate"),
              ("awaiting_gate", "running"), ("running", "completed")}
@@ -208,6 +213,8 @@ def test_gate_rejection_runs_bounded_revise_then_surfaces():
     ) == "rejected_design"
     row = store.tasks[TID]
     assert row["status"] == "completed" and row["outcome"] == "rejected_design"
+    # the surface path is finished work too: design×2 + whitebox×1 gets booked
+    assert store.settled == [(TID, 3)]
 
 
 def test_cancel_stops_at_superstep_boundary():

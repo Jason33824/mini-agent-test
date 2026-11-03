@@ -15,10 +15,10 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 /**
  * Hand-rolled SSE consumer (fetch + ReadableStream).
  *
- * Why not EventSource: it can neither carry the X-User-Id auth header nor
- * control reconnection. Terminal events close the stream for good; anything
- * else reconnects with exponential backoff and asks the consumer to resync
- * from a snapshot first.
+ * Why not EventSource: it can neither carry the Authorization bearer header
+ * nor control reconnection. Terminal events close the stream for good;
+ * anything else reconnects with exponential backoff and asks the consumer to
+ * resync from a snapshot first.
  */
 export class TaskEventStream {
   private controller: AbortController | null = null
@@ -63,7 +63,7 @@ export class TaskEventStream {
 
   private async consume(): Promise<void> {
     const headers: Record<string, string> = {
-      'X-User-Id': useUser().id.value,
+      ...useUser().authHeader(),
       Accept: 'text/event-stream',
     }
     const resp = await fetch(`/v1/tasks/${this.taskId}/events`, {

@@ -6,7 +6,7 @@ COPY worker/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # The worker owns the brain: orchestrator + agents. It never touches HTTP.
-COPY orchestrator.py ./
+COPY orchestrator.py tracing.py ./
 COPY agents/ ./agents/
 COPY worker/ ./worker/
 

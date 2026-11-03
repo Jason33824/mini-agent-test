@@ -113,12 +113,12 @@ sequenceDiagram
 
 ## 5. Collaboration mode: two phases
 
-**Phase 1 (W1.5-W3): supervisor in one process.** The orchestrator is a
+**Phase 1: supervisor in one process.** The orchestrator is a
 LangGraph; each agent is a subgraph invoked by handoff. All agents live in one
 worker container. This validates the protocol — schemas, gates, revise loops —
 with zero distributed-systems overhead.
 
-**Phase 2 (W4+): agents as independent containers.** Each agent gets its own
+**Phase 2: agents as independent containers.** Each agent gets its own
 worker + queue; the orchestrator publishes handoff messages on redis streams.
 Adds: dead-letter queues, per-agent autoscaling, cross-container trace
 continuity. Only the topology changes — the artifact contract is untouched,
@@ -153,7 +153,7 @@ hard-coded pipeline (no collaboration semantics, just a pipe).
   semantic invariants, e.g. every case links to a design item).
 - **Orchestrator tests:** gate semantics (rejection terminates, approval
   proceeds), artifact version rejection.
-- **Golden-set end-to-end (W4):** a small frozen PRD set with expected
+- **Golden-set end-to-end:** a small frozen PRD set with expected
   artifact shapes; runs in CI as the collaboration regression suite.
 
 ## 9. Agent internals
@@ -240,11 +240,14 @@ per-agent override (`MINI_AGENT_LLM_MODEL_<AGENT>`) falls back to the shared
 generation, cheaper model for execution verdicts. Per-agent token attribution
 (section 6) shows where the money goes; routing is how you act on it.
 
-**Not in the graph.** Per-task/per-tenant budget enforcement and kill
-switches belong to the API/worker quota layer (README element "cost
-quotas") — the graph stays a pure workflow and does not duplicate platform
-concerns. Provider-side prompt caching is a W2+ optimization once real
-traffic shows repeat prefixes.
+**Not in the graph — the quota layer (ADR 0003).** Per-tenant budget
+enforcement lives beside the state machine, not inside it: the API *reserves*
+the structural ceiling (6 calls) against the tenant's monthly ledger at
+submission — over-cap requests get 429 before touching the queue — and the
+worker *settles* the exact call count when the graph reaches a terminal
+state. The graph stays a pure workflow and does not duplicate platform
+concerns. Provider-side prompt caching is the lever once real traffic shows
+repeat prefixes.
 
 ## 12. Disagreement resolution
 
@@ -257,11 +260,11 @@ up as two rows over the same area, never as one overwriting the other.
 
 The arbitration owner is the **human gate**, with two mechanisms:
 
-- **Veto (implemented).** A gate decision may carry `drop_areas: [...]`.
+- **Veto.** A gate decision may carry `drop_areas: [...]`.
   The veto is durable task state: every later merge pass skips vetoed
   areas, including after revise rounds — the orchestrator never silently
   re-proposes evidence a human has declined (regression-tested).
-- **Disposition (W2).** The design agent will be required to answer every
+- **Disposition.** The design agent answers every
   evidence item with `integrate` or `rebut` (+ reason). Rebutted items are
   flagged as agent disagreement at the gate, so the human arbitrates only
   the contested rows instead of scanning the full matrix.

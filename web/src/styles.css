@@ -139,3 +139,16 @@ button.danger { background: var(--danger); }
 .artifact th { color: var(--muted); font-weight: 600; }
 .pass { color: var(--ok); font-weight: 700; }
 .fail { color: var(--danger); font-weight: 700; }
+
+/* auth gate (App.vue): the SPA renders only with a live token */
+.login-wrap { display: grid; place-items: center; min-height: 80vh; }
+.login-card {
+  display: flex; flex-direction: column; gap: 10px;
+  border: 1px solid var(--line); border-radius: 10px; padding: 24px;
+  min-width: 300px;
+}
+.login-card .hint { color: var(--muted); font-size: 13px; }
+button.ghost {
+  background: none; color: var(--muted); border: 1px solid var(--line);
+  padding: 4px 10px; font-size: 13px;
+}

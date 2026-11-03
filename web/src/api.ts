@@ -24,12 +24,14 @@ export function describeError(err: unknown): string {
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers)
-  headers.set('X-User-Id', useUser().id.value)
+  for (const [k, v] of Object.entries(useUser().authHeader())) headers.set(k, v)
   if (init.body != null && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json')
   }
   const resp = await fetch(path, { ...init, headers })
   if (!resp.ok) {
+    // a dead token drops the session: App.vue reacts to loggedIn and shows login
+    if (resp.status === 401 && path !== '/v1/auth/token') useUser().logout()
     // unified error envelope: {"error": {code, message, details}}
     let code = 'http_error'
     let message = `HTTP ${resp.status}`

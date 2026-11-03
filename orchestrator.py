@@ -20,6 +20,7 @@ from langgraph.types import interrupt
 
 from agents.artifacts import load_artifact
 from agents.registry import AGENT_REGISTRY
+from tracing import span
 
 logger = logging.getLogger(__name__)
 
@@ -56,18 +57,20 @@ def _handoff(agent_name: str, input_builder, output_field: str, attempts_key: st
             "input_artifact": input_builder(state),
             "feedback": state.get("feedback", ""),
         }
-        try:
-            result = agent.compile().invoke(payload)
-        except Exception:
-            if on_error != "skip":
-                raise
-            # Whitebox degrades, never blocks (DESIGN.md section 2).
-            logger.warning("whitebox branch failed; continuing without evidence", exc_info=True)
-            update = {output_field: {}}
-        else:
-            artifact = result["output_artifact"]
-            load_artifact(artifact)  # typed rejection at the boundary — never forwarded silently
-            update = {output_field: artifact}  # feedback clearing happens at the fan-in node
+        # one span per handoff: the trace tree mirrors the collaboration graph
+        with span(f"handoff:{agent_name}", {"task.id": state["task_id"]}, kind="CHAIN"):
+            try:
+                result = agent.compile().invoke(payload)
+            except Exception:
+                if on_error != "skip":
+                    raise
+                # Whitebox degrades, never blocks (DESIGN.md section 2).
+                logger.warning("whitebox branch failed; continuing without evidence", exc_info=True)
+                update = {output_field: {}}
+            else:
+                artifact = result["output_artifact"]
+                load_artifact(artifact)  # typed rejection at the boundary — never forwarded silently
+                update = {output_field: artifact}  # feedback clearing happens at the fan-in node
         if attempts_key:  # parallel branches write no shared key (INVALID_CONCURRENT_GRAPH_UPDATE)
             update[attempts_key] = state.get(attempts_key, 0) + 1
         return update

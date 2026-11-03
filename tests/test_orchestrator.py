@@ -5,10 +5,6 @@ from langgraph.types import Command
 
 from agents.llm import FakeLLM
 from agents.registry import AGENT_REGISTRY
-from agents.test_case.agent import TestCaseAgent
-from agents.test_design.agent import TestDesignAgent
-from agents.test_execution.agent import TestExecutionAgent
-from agents.whitebox.agent import WhiteboxAgent
 from orchestrator import MAX_REVISE, build_orchestrator
 
 DESIGN_DRAFT = {
@@ -134,8 +130,8 @@ def test_whitebox_failure_degrades_never_blocks():
     _wire()
     AGENT_REGISTRY["whitebox"].llm = FakeLLM({})  # no scripted response -> raises
     graph = _graph()
-    out = graph.invoke({"task_id": "t1", "prd": "checkout PRD"}, CFG)
-    out = _resume(graph, {"approved": True, "feedback": ""})
+    graph.invoke({"task_id": "t1", "prd": "checkout PRD"}, CFG)
+    _resume(graph, {"approved": True, "feedback": ""})
     final = _resume(graph, {"approved": True, "feedback": ""})
     assert final["outcome"] == "report"
     areas = {c["area"] for c in final["design"]["coverage_matrix"]}

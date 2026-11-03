@@ -6,7 +6,6 @@ outcome, so worker claims and API cancel writes can never interleave badly.
 """
 import json
 import os
-import uuid
 from typing import Any
 
 from sqlalchemy import text
@@ -36,7 +35,7 @@ class WorkerStore:
         row = await self._one(
             "UPDATE tasks SET status = 'running', updated_at = now()"
             " WHERE id = :task_id AND status IN ('queued', 'running')"
-            " RETURNING id, prd",
+            " RETURNING id, prd, user_id",
             {"task_id": task_id},
         )
         return row
@@ -46,7 +45,7 @@ class WorkerStore:
         return await self._one(
             "UPDATE tasks SET status = 'running', updated_at = now()"
             " WHERE id = :task_id AND status = 'awaiting_gate' AND current_gate = :gate"
-            " RETURNING id, prd",
+            " RETURNING id, prd, user_id",
             {"task_id": task_id, "gate": gate},
         )
 
@@ -81,6 +80,22 @@ class WorkerStore:
             "UPDATE tasks SET status = 'failed', error = :error, updated_at = now()"
             " WHERE id = :task_id",
             {"task_id": task_id, "error": error[:2000]},
+        )
+
+    async def settle_quota(self, task_id: str, llm_calls: int) -> None:
+        """One ledger row per finished task, billed to the task owner's tenant.
+
+        The tenant is resolved through the task row (not trusted from the
+        request path): settlement follows ownership as it was persisted at
+        submission. ON CONFLICT keeps re-settlement idempotent — a Retry that
+        re-drives to the same terminal state cannot double-bill.
+        """
+        await self._exec(
+            "INSERT INTO quota_ledger (id, tenant_id, task_id, llm_calls)"
+            " SELECT gen_random_uuid(), u.tenant_id, :task_id, :calls"
+            " FROM tasks t JOIN users u ON u.id = t.user_id"
+            " ON CONFLICT (tenant_id, task_id) DO NOTHING",
+            {"task_id": task_id, "calls": llm_calls},
         )
 
     async def save_artifacts(self, task_id: str, values: dict[str, Any]) -> list[tuple[str, str]]:

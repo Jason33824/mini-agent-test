@@ -7,8 +7,12 @@ Production semantics implemented here — each one is observable from the outsid
   against the API's cancel writes (single-writer state machine, LLD §10);
   'running' is re-enterable by the same job only — an arq Retry redelivers the
   same job_id (= task_id), which already holds the running state
-- the graph runs under a Postgres checkpointer with thread_id = task_id, so a
-  gate interrupt survives process restarts; resume = Command(resume=decision)
+- the graph runs under a Postgres checkpointer with thread_id = user:task
+  namespacing (the checkpoint stream never shares a thread with another user),
+  so a gate interrupt survives process restarts; resume = Command(resume=decision)
+- quota settlement: a finished task books its real LLM call count to the
+  tenant ledger — the count is exact because every handoff makes exactly one
+  call (DESIGN.md §11), readable straight off the final state
 - cooperative cancellation: cancel_requested is checked at every superstep
   boundary of graph.stream() — the running node finishes, the next never starts
 - transient errors → arq Retry (exponential 2**attempt); contract-fatal
@@ -19,15 +23,17 @@ import json
 import logging
 import os
 import threading
-from datetime import datetime, timezone
-from typing import Any
+from datetime import UTC, datetime
+from typing import Any, ClassVar
 
 import redis.asyncio as aioredis
 from arq import Retry
 from arq.connections import RedisSettings
 from langgraph.types import Command
+from opentelemetry import context as otel_context
 
 from orchestrator import build_orchestrator
+from tracing import span
 from worker.db import WorkerStore, make_engine
 
 logger = logging.getLogger("worker")
@@ -48,7 +54,7 @@ async def _publish(redis, task_id: str, type_: str, payload: dict) -> None:
     event = {
         "type": type_,
         "payload": payload,
-        "ts": datetime.now(timezone.utc).isoformat(),
+        "ts": datetime.now(UTC).isoformat(),
     }
     await redis.publish(_channel(task_id), json.dumps(event))
 
@@ -78,27 +84,60 @@ def _parse_chunk(chunk: Any) -> tuple[str | None, dict | None]:
 _GATE_ARTIFACT_FIELD = {"design": "design", "cases": "cases"}
 
 
-async def _drive_graph(ctx, task_id: str, graph_input: Any) -> str:
+def _llm_calls(values: dict[str, Any]) -> int:
+    """Exact per-task LLM call count from the final graph state.
+
+    Every handoff makes exactly one call and bumps its attempt counter; the
+    whitebox branch has no counter (it never revises) but runs at most once,
+    proven by the presence of its artifact. design + cases-attempts (which
+    also counts the execution handoff) + whitebox = the per-task total.
+    """
+    return (
+        values.get("design_attempts", 0)
+        + values.get("cases_attempts", 0)
+        + (1 if values.get("evidence") else 0)
+    )
+
+
+async def _drive_graph(ctx, task_id: str, user_id: str, graph_input: Any) -> str:
     """Stream one graph execution; translate superstep boundaries into state
     transitions, gate suspensions and pub/sub events."""
     store: WorkerStore = ctx["store"]
     redis = ctx["redis"]
     graph = build_orchestrator(checkpointer=ctx["checkpointer"])
-    config = {"configurable": {"thread_id": task_id}}
+    config = {"configurable": {"thread_id": f"{user_id}:{task_id}"}}
 
     # The graph is sync; drive it in a thread and hand chunks to the event loop
     # through a queue. Each chunk boundary doubles as a cancel checkpoint.
     loop = asyncio.get_running_loop()
     queue: asyncio.Queue = asyncio.Queue()
+    # OTel context is per-thread; snapshot it (the task span is current here)
+    # and re-attach inside the producer, so handoff/llm spans nest under the
+    # task span instead of floating as separate traces
+    graph_ctx = otel_context.get_current()
+
+    def _emit(kind: str, item: Any) -> None:
+        # The async side can be gone before this thread is (test bypasses,
+        # teardown races): a closed loop means nobody will read the chunk,
+        # so drop it instead of raising inside the producer.
+        if loop.is_closed():
+            return
+        try:
+            loop.call_soon_threadsafe(queue.put_nowait, (kind, item))
+        except RuntimeError:  # loop closed between check and call
+            pass
 
     def _produce() -> None:
+        token = otel_context.attach(graph_ctx)
         try:
             for chunk in graph.stream(graph_input, config, stream_mode="updates"):
-                loop.call_soon_threadsafe(queue.put_nowait, ("chunk", chunk))
+                _emit("chunk", chunk)
             values = graph.get_state(config).values
-            loop.call_soon_threadsafe(queue.put_nowait, ("state", values))
+            _emit("state", values)
         except BaseException as exc:  # noqa: BLE001 — relayed to the async side
-            loop.call_soon_threadsafe(queue.put_nowait, ("error", exc))
+            _emit("error", exc)
+        finally:
+            otel_context.detach(token)
 
     threading.Thread(target=_produce, daemon=True, name=f"graph-{task_id}").start()
 
@@ -112,7 +151,7 @@ async def _drive_graph(ctx, task_id: str, graph_input: Any) -> str:
                 await store.mark_cancelled(task_id)
                 await _publish(redis, task_id, "task.status", {"status": "cancelled"})
                 raise TaskCancelled(task_id)
-            node, gate_value = _parse_chunk(item)
+            _, gate_value = _parse_chunk(item)
             if gate_value is not None:
                 pending_gate = gate_value.get("stage") or "unknown"
             # node-level progress stays in checkpoint + trace; the SSE surface
@@ -131,6 +170,11 @@ async def _drive_graph(ctx, task_id: str, graph_input: Any) -> str:
         for kind_, artifact_id in await store.save_artifacts(task_id, values):
             await _publish(redis, task_id, "artifact.created",
                            {"kind": kind_, "artifact_id": artifact_id})
+        # book before completing: a crash between the two re-settles on Retry
+        # idempotently (ledger unique on tenant+task); failed/cancelled runs
+        # are not billed — the ledger records finished work, so the worst
+        # case is conservative under-counting, never double-charging
+        await store.settle_quota(task_id, _llm_calls(values))
         await store.complete(task_id, outcome)
         await _publish(redis, task_id, "task.status", {"status": "completed", "outcome": outcome})
         if outcome == "report":
@@ -138,12 +182,12 @@ async def _drive_graph(ctx, task_id: str, graph_input: Any) -> str:
         return outcome
 
 
-async def _execute(ctx, task_id: str, graph_input: Any) -> str:
+async def _execute(ctx, task_id: str, user_id: str, graph_input: Any) -> str:
     """Shared error policy around one graph drive (run + resume)."""
     store: WorkerStore = ctx["store"]
     redis = ctx["redis"]
     try:
-        return await _drive_graph(ctx, task_id, graph_input)
+        return await _drive_graph(ctx, task_id, user_id, graph_input)
     except TaskCancelled:
         return "cancelled"
     except ValueError as exc:
@@ -155,7 +199,7 @@ async def _execute(ctx, task_id: str, graph_input: Any) -> str:
         return "failed"
     except asyncio.CancelledError:
         raise
-    except Exception as exc:  # noqa: BLE001 — transient policy decided here
+    except Exception as exc:
         if ctx.get("job_try", 1) >= MAX_JOB_TRIES:
             logger.error("task %s exhausted retries: %s", task_id, exc)
             await store.fail(task_id, f"exhausted: {exc}")
@@ -175,7 +219,8 @@ async def run_pipeline(ctx, task_id: str) -> str:
         # dedupe already collapsed — nothing to do either way
         return "skipped"
     await _publish(ctx["redis"], task_id, "task.status", {"status": "running"})
-    return await _execute(ctx, task_id, {"task_id": task_id, "prd": task["prd"]})
+    with span("task.run", {"task.id": task_id, "user.id": task["user_id"]}, kind="CHAIN"):
+        return await _execute(ctx, task_id, task["user_id"], {"task_id": task_id, "prd": task["prd"]})
 
 
 async def resume_pipeline(ctx, task_id: str, gate: str, decision: dict) -> str:
@@ -185,7 +230,9 @@ async def resume_pipeline(ctx, task_id: str, gate: str, decision: dict) -> str:
     if task is None:
         return "skipped"  # decision superseded by a cancel, or duplicate delivery
     await _publish(ctx["redis"], task_id, "task.status", {"status": "running"})
-    return await _execute(ctx, task_id, Command(resume=decision))
+    with span("task.resume", {"task.id": task_id, "user.id": task["user_id"],
+                              "gate": gate}, kind="CHAIN"):
+        return await _execute(ctx, task_id, task["user_id"], Command(resume=decision))
 
 
 async def on_startup(ctx) -> None:
@@ -214,7 +261,7 @@ async def on_shutdown(ctx) -> None:
 
 
 class WorkerSettings:
-    functions = [run_pipeline, resume_pipeline]
+    functions: ClassVar[list] = [run_pipeline, resume_pipeline]
     on_startup = on_startup
     on_shutdown = on_shutdown
     redis_settings = RedisSettings.from_dsn(REDIS_URL)
