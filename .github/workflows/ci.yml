@@ -18,7 +18,7 @@ jobs:
           pip install pytest ruff
       - name: Lint (pyflakes-class findings only — unused imports, undefined names)
         run: ruff check --select F .
-      - name: Test (offline suites: no DB, no redis, no network)
+      - name: Test (offline suites — no DB, no redis, no network)
         run: pytest tests/ -q
 
   web:
