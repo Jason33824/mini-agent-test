@@ -18,8 +18,9 @@ from typing import Any, TypedDict
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
 
-from agents.artifacts import load_artifact
+from agents.artifacts import evidence_fingerprint, load_artifact
 from agents.registry import AGENT_REGISTRY
+from agents.test_design.disposition import disposition_for
 from tracing import span
 
 logger = logging.getLogger(__name__)
@@ -79,20 +80,59 @@ def _handoff(agent_name: str, input_builder, output_field: str, attempts_key: st
     return node
 
 
+def _apply_arbitration(design: dict[str, Any], dropped_areas: set[str], approved: bool = False) -> None:
+    """Apply human review to the orchestrator-owned design composite, in place.
+
+    A veto removes the matrix row but retains its disposition as `dropped` —
+    like a SARIF suppression, the dismissal and its reason stay auditable. On
+    approval, a still-pending rebuttal becomes `kept` (the human overrode it).
+    Callers pass a deepcopy; upstream agent artifacts are never mutated.
+    """
+    if dropped_areas:
+        design["coverage_matrix"] = [
+            row for row in design.get("coverage_matrix", [])
+            if row.get("area") not in dropped_areas
+        ]
+    for item in design.get("dispositions", []):
+        if item.get("source") in dropped_areas:
+            item["review"] = "dropped"
+        elif approved and item.get("decision") == "rebut" and item.get("review") == "pending":
+            item["review"] = "kept"
+
+
 def _merge_evidence(state: OrchestratorState) -> OrchestratorState:
-    """Fan-in: fold whitebox evidence into the design's coverage matrix (orchestrator node, DESIGN.md section 9)."""
+    """Fan-in: fold whitebox evidence into the design's coverage matrix and
+    record the design's disposition per item (orchestrator node, DESIGN.md sections 9, 12)."""
     # deepcopy: the orchestrator never mutates an upstream artifact — a shallow
     # copy shares the nested coverage_matrix list and a revise round would fold
     # the same evidence twice (breaks handoff idempotency).
     design = copy.deepcopy(state["design"])
     evidence = state.get("evidence") or {}
     dropped = set(state.get("dropped_areas") or [])
-    for item in evidence.get("items", []):
-        if item.get("source") in dropped:
-            continue  # vetoed at the gate — not an error, a recorded human decision
+    # design's answer to EVERY evidence item (including previously vetoed ones,
+    # which remain as `dropped` audit records), computed against its OWN anchors
+    # before evidence folds in — a deterministic, design-owned policy, so the
+    # section 11 call bound is untouched. Rebutted rows still merge (advisory).
+    items = [
+        # New whitebox outputs already carry ids. Backfill pre-fingerprint v1
+        # evidence (e.g. an old checkpoint resumed after upgrade) without
+        # mutating the upstream artifact; the same deterministic rule is used.
+        {**item, "id": item.get("id") or evidence_fingerprint(state["task_id"], item, index)}
+        for index, item in enumerate(evidence.get("items", []))
+    ]
+    design["dispositions"] = disposition_for(design, items)
+    for item in items:
         design.setdefault("coverage_matrix", []).append(
-            {"area": item.get("source", "static"), "risk": item.get("risk_hint", ""), "covered_by": []}
+            {
+                "area": item.get("source", "static"),
+                "risk": item.get("risk_hint", ""),
+                "covered_by": [],
+                "evidence_id": item.get("id"),
+            }
         )
+    # durable veto: no matrix row is re-proposed, but the disposition remains
+    # as a dropped audit record with its original reason and stable id.
+    _apply_arbitration(design, dropped)
     load_artifact(design)  # merged artifact still honors the contract
     # feedback is consumed here too: revise rounds re-run only the design branch,
     # and clearing at the fan-in keeps parallel branches free of shared writes.
@@ -108,10 +148,27 @@ def _gate(stage: str):
             "approved": bool(decision.get("approved")),
             "feedback": decision.get("feedback", ""),
         }
+        dropped = set(state.get("dropped_areas") or [])
         if decision.get("drop_areas"):
-            # Human veto on evidence: durable for the rest of the task — every
-            # later merge pass skips these areas (never silently re-proposed).
-            update["dropped_areas"] = list(decision["drop_areas"])
+            # Vetoes accumulate for the rest of the task: a later decision adds
+            # areas rather than replacing earlier ones, so a revise can never
+            # resurrect evidence a human already declined.
+            dropped |= set(decision["drop_areas"])
+            update["dropped_areas"] = sorted(dropped)
+        if stage == "design" and (decision.get("drop_areas") or update["approved"]):
+            # Reflect human review into the design composite immediately. On
+            # approval a pending rebuttal is either dropped (upheld) or kept
+            # (overridden); the row is removed only for dropped areas, while
+            # the disposition stays as an audit record. On the reject path the
+            # design re-runs and merge applies the same durable veto — the two
+            # paths are idempotent. Deepcopy keeps the checkpoint safe.
+            design = copy.deepcopy(state["design"])
+            _apply_arbitration(
+                design,
+                dropped,
+                approved=update["approved"],
+            )
+            update["design"] = design
         return update
 
     node.__name__ = f"gate_{stage}"

@@ -10,6 +10,16 @@ from agents.llm import LLMClient, get_llm
 
 
 class AgentState(TypedDict, total=False):
+    """The one narrow subgraph I/O envelope — deliberately not a universal state.
+
+    All domain agents share these four transport keys, while their business
+    payloads remain separate versioned artifacts (DesignArtifact,
+    WhiteboxEvidence, CaseArtifact, ExecutionReport). A combined scope/items/
+    results state would erase those boundaries; per-agent TypedDicts would only
+    rename the same envelope. Keep this shared, keep the agents and contracts
+    separate (LangGraph shared-schema subgraph pattern, DESIGN.md section 9).
+    """
+
     task_id: str
     input_artifact: dict[str, Any]
     output_artifact: dict[str, Any]

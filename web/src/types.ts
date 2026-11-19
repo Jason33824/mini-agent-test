@@ -28,6 +28,15 @@ export interface Task {
 
 export type ArtifactKind = 'design' | 'evidence' | 'cases' | 'report'
 
+export interface DispositionItem {
+  evidence_id: string
+  source: string
+  decision: 'integrate' | 'rebut'
+  reason_code: 'anchor_match' | 'outside_declared_scope'
+  reason: string
+  review: 'not_needed' | 'pending' | 'kept' | 'dropped'
+}
+
 export interface Artifact {
   id?: string
   task_id?: string

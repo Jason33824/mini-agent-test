@@ -16,6 +16,11 @@ class TestDesignAgent(BaseAgent):
         if state.get("feedback"):
             user += f"\n\nReviewer feedback to address: {state['feedback']}"
         artifact = self.client().complete_json(self.SYSTEM, user)
+        # dispositions are a fan-in product (the design-owned policy answers
+        # evidence at merge_evidence), never a draft field — the draft runs in
+        # parallel with whitebox and cannot see evidence. Drop any the model
+        # hallucinated so the only source of dispositions is the policy.
+        artifact.pop("dispositions", None)
         artifact.update(
             {
                 "kind": "design",

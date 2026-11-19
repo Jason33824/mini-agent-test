@@ -8,6 +8,15 @@ interface CoverageRow {
   area?: string
   risk?: string
   covered_by?: string[]
+  evidence_id?: string | null
+}
+interface DispositionRow {
+  evidence_id?: string
+  source?: string
+  decision?: string
+  reason_code?: string
+  reason?: string
+  review?: 'not_needed' | 'pending' | 'kept' | 'dropped'
 }
 interface EvidenceItem {
   source?: string
@@ -35,7 +44,12 @@ const latest = computed<Partial<Record<ArtifactKind, Artifact>>>(() => {
 })
 
 const design = computed(
-  () => latest.value.design?.content as { scope?: string[]; risks?: string[]; coverage_matrix?: CoverageRow[] } | undefined,
+  () => latest.value.design?.content as {
+    scope?: string[]
+    risks?: string[]
+    coverage_matrix?: CoverageRow[]
+    dispositions?: DispositionRow[]
+  } | undefined,
 )
 const evidence = computed(
   () => latest.value.evidence?.content as { items?: EvidenceItem[] } | undefined,
@@ -66,6 +80,20 @@ const hasAny = computed(() => Object.keys(latest.value).length > 0)
         </tr>
       </tbody>
     </table>
+    <template v-if="design.dispositions?.length">
+      <h3>Disposition <span class="hint">design's answer to each whitebox evidence item</span></h3>
+      <table>
+        <thead><tr><th>evidence source</th><th>decision</th><th>human review</th><th>reason</th></tr></thead>
+        <tbody>
+          <tr v-for="d in design.dispositions" :key="d.evidence_id">
+            <td>{{ d.source }}</td>
+            <td :class="d.decision === 'rebut' ? 'rebut' : 'integrate'">{{ d.decision }}</td>
+            <td>{{ d.review === 'not_needed' ? '—' : d.review }}</td>
+            <td><code>{{ d.reason_code }}</code> — {{ d.reason }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </template>
   </div>
 
   <div v-if="evidence" class="artifact">

@@ -283,3 +283,42 @@ def test_contract_failure_fails_task_without_retry():
     failed_events = [event["payload"] for _, event in redis.events
                      if event["type"] == "task.status"]
     assert failed_events[-1]["status"] == "failed"
+
+
+def test_design_gate_request_carries_dispositions():
+    """The gate payload inlines the merged design, so the design's answer to
+    each evidence item rides to the human with no extra event or route."""
+    _wire()
+    store, redis = FakeWorkerStore(), FakeRedis()
+    checkpointer = InMemorySaver()
+    store.seed(TID)
+    assert asyncio.run(run_pipeline(_ctx(store, redis, checkpointer), TID)) == "awaiting_gate"
+    artifact = _gate_requests(redis)[0]["artifact"]
+    assert artifact["kind"] == "design"
+    dispositions = artifact["dispositions"]
+    assert [d["source"] for d in dispositions] == ["interface specs"]
+    assert dispositions[0]["decision"] == "rebut"
+    assert dispositions[0]["review"] == "pending"
+    assert dispositions[0]["evidence_id"]
+    assert dispositions[0]["reason"]
+
+
+def test_upheld_rebuttal_on_approval_reaches_report_without_extra_cost():
+    """Approve the design gate while upholding the rebuttal (veto the area):
+    the contested row is dropped forward, the run reaches report, and neither
+    disposition nor the veto spends an LLM call — settlement stays at 4."""
+    _wire()
+    store, redis = FakeWorkerStore(), FakeRedis()
+    checkpointer = InMemorySaver()
+    store.seed(TID)
+    assert asyncio.run(run_pipeline(_ctx(store, redis, checkpointer), TID)) == "awaiting_gate"
+    assert asyncio.run(
+        resume_pipeline(_ctx(store, redis, checkpointer), TID, "design",
+                        {"approved": True, "feedback": "", "drop_areas": ["interface specs"]})
+    ) == "awaiting_gate"
+    assert store.tasks[TID]["current_gate"] == "cases"
+    assert asyncio.run(
+        resume_pipeline(_ctx(store, redis, checkpointer), TID, "cases",
+                        {"approved": True, "feedback": ""})
+    ) == "report"
+    assert store.settled == [(TID, 4)]

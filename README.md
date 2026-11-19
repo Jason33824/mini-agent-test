@@ -49,7 +49,7 @@ flowchart TB
     O --> C[test-case agent]
     O --> E[test-execution agent]
     D & B & C & E -. typed artifacts .-> O
-    K --> P[phoenix - OpenTelemetry<br/>one trace tree across agents<br/>per-agent token accounting]
+    K --> P[phoenix - trace observability<br/>one trace tree across agents<br/>per-agent token accounting]
     A --> PG[(postgres)]
     P --> PPG[(phoenix-pg)]
     K --> PG
@@ -102,6 +102,7 @@ beyond localhost.
 | 9 | Artifact contracts | pydantic schemas with version field; agents reject unknown versions | A schema change shows up as a failing test, not a silent hallucination |
 | 10 | Health checks and graceful shutdown | compose healthchecks; SIGTERM drains in-flight agents | docker compose stop never orphans a task |
 | 11 | CI/CD | GitHub Actions: ruff + pytest on the backend, vue-tsc + build on the web | Red CI blocks merge |
+| 12 | Disagreement resolution | design answers each whitebox finding (`integrate`/`rebut` + reason) at the merge fan-in; the gate arbitrates only contested rows; stable finding ids and `kept`/`dropped` review records make every decision auditable | Rebutted evidence is flagged at the design gate — uphold a rebuttal to drop the area, approve to keep it |
 
 Design decisions live in [docs/adr/](docs/adr/); the full multi-agent design in
 [docs/DESIGN.md](docs/DESIGN.md).

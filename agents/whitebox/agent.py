@@ -1,7 +1,7 @@
 """Whitebox agent: static-analysis evidence for the design agent (parallel branch)."""
 from langgraph.graph import END, StateGraph
 
-from agents.artifacts import load_artifact
+from agents.artifacts import evidence_fingerprint, load_artifact
 from agents.base import AgentState, BaseAgent
 
 
@@ -14,6 +14,17 @@ class WhiteboxAgent(BaseAgent):
     def _analyze(self, state: AgentState) -> AgentState:
         user = f"PRD and interface specs:\n{state['input_artifact'].get('prd', '')}"
         artifact = self.client().complete_json(self.SYSTEM, user)
+        # Finding identity is platform-owned, not model-generated: deterministic
+        # per task + content + list position, so retries/revises preserve it and
+        # same-source findings remain distinct for disposition and audit. Copy
+        # each item first: aliased dicts in a scripted response must not share
+        # the id written by a later list position.
+        items = artifact.get("items") or []
+        if isinstance(items, list):
+            artifact["items"] = [dict(item) if isinstance(item, dict) else item for item in items]
+            for index, item in enumerate(artifact["items"]):
+                if isinstance(item, dict):
+                    item["id"] = evidence_fingerprint(state["task_id"], item, index)
         artifact.update(
             {
                 "kind": "evidence",

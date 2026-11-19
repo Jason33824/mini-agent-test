@@ -125,6 +125,15 @@ button.danger { background: var(--danger); }
 
 .gatepanel { border: 1px dashed var(--line); border-radius: 8px; padding: 12px; }
 .veto { margin: 8px 0; }
+.disagreement { margin: 8px 0; }
+.contested {
+  border-left: 3px solid #b54708;
+  background: #fff8f0;
+  border-radius: 6px;
+  padding: 6px 10px;
+  margin: 6px 0;
+}
+.contested .hint { margin: 2px 0 0; }
 
 .artifact table {
   width: 100%;
@@ -139,6 +148,8 @@ button.danger { background: var(--danger); }
 .artifact th { color: var(--muted); font-weight: 600; }
 .pass { color: var(--ok); font-weight: 700; }
 .fail { color: var(--danger); font-weight: 700; }
+.integrate { color: var(--ok); font-weight: 600; }
+.rebut { color: #b54708; font-weight: 600; }
 
 /* auth gate (App.vue): the SPA renders only with a live token */
 .login-wrap { display: grid; place-items: center; min-height: 80vh; }
